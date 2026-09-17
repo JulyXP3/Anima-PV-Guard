@@ -1,0 +1,9 @@
+{
+  "display_name": "Anima PV Guard",
+  "loading_order": 1000,
+  "js": "index.js",
+  "author": "JulyXp3",
+  "version": "1.0.0",
+  "auto_update": false,
+  "minimum_client_version": "1.12.7"
+}
