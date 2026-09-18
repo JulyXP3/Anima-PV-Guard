@@ -27,6 +27,14 @@ const TAG = '[Anima PV Guard]';
 /** 需要“用户回合”才放行的生成类型。提示词查看器用的是 'normal'。 */
 const GATED_TYPES = ['normal'];
 
+/**
+ * Anima 拦截器白名单（interceptor.js 里的 allowedTypes）。
+ * 只有这几种类型的生成，Anima 才可能真的跑检索并写容器；
+ * 其它类型（regenerate / continue / quiet ...）它直接 early-return，
+ * 此时容器是空的 —— 不能拿这个空状态去覆盖快照。
+ */
+const ANIMA_HANDLED_TYPES = ['chat', 'impersonate', 'swipe', 'normal'];
+
 /** Anima 写入检索结果的两个世界书条目名 */
 const SNAPSHOT_ENTRY_NAMES = [
   '[ANIMA_Chat_History_Container]',
@@ -116,12 +124,23 @@ async function restoreSnapshot() {
     if (!read) return true;
 
     const toWrite = {};
+    let snapshotHadContent = false;
+    let alreadyFresh = 0;
+    let missingEntry = 0;
+
     for (const name of SNAPSHOT_ENTRY_NAMES) {
       const wanted = snapshot[name];
       if (!wanted) continue; // 上次请求本来就没有这一块
+      snapshotHadContent = true;
       const entry = read.entries.find(e => e.name === name);
-      if (!entry) continue;
-      if (String(entry.content ?? '').trim() !== '') continue; // 已有更新内容，别动
+      if (!entry) {
+        missingEntry++;
+        continue;
+      }
+      if (String(entry.content ?? '').trim() !== '') {
+        alreadyFresh++; // 已有更新内容，别动
+        continue;
+      }
       toWrite[name] = wanted;
     }
 
@@ -129,8 +148,12 @@ async function restoreSnapshot() {
       await writeEntries(read, toWrite);
       restoredThisTurn = true;
       console.log(`${TAG} 已回填上次注入的记忆块: ${Object.keys(toWrite).join(' / ')}`);
+    } else if (!snapshotHadContent) {
+      console.log(`${TAG} 上次真实请求没有注入记忆块（检索结果为空 / RAG 未运行 / 未绑定库），无需回填`);
+    } else if (alreadyFresh > 0) {
+      console.log(`${TAG} 容器条目里已有更新的内容，无需回填`);
     } else {
-      console.log(`${TAG} 上次请求没有记忆块注入，无需回填`);
+      console.log(`${TAG} 世界书里没找到容器条目，无需回填`);
     }
   } catch (e) {
     console.warn(`${TAG} 回填记忆块失败（不影响生成）:`, e);
@@ -171,7 +194,9 @@ function buildGuard(original) {
 
     if (!isFakeTurn) {
       const result = await original.call(this, chat, contextSize, abort, type);
-      await captureSnapshot();
+      // 只在这几种类型下记录快照：其它类型 Anima 根本没跑检索，容器是空的，
+      // 拿这个空状态去覆盖快照会误判成"上次请求没有记忆块"。
+      if (!type || ANIMA_HANDLED_TYPES.includes(type)) await captureSnapshot();
       return result;
     }
 
