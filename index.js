@@ -65,8 +65,6 @@ const SUPPRESS_ANIMA_POST_GEN = false;
 
 /** 热开关：false = 完全放行（回到没装补丁的行为） */
 let enabled = true;
-/** 一次性：下次伪造生成放行真实检索（拿一份按当前聊天重算的记忆块） */
-let forceLiveOnce = false;
 /** 本次生成是否由用户真实参与（发消息 / 群聊成员轮次）触发 */
 let userTurnArmed = false;
 /** 刚被跳过的那次检索是否属于“伪造生成”，供可选的收尾抑制使用 */
@@ -199,15 +197,10 @@ function buildGuard(original) {
 
   const guarded = async function (chat, contextSize, abort, type) {
     const isFakeTurn = GATED_TYPES.includes(type) && !userTurnArmed;
-    const forced = isFakeTurn && forceLiveOnce;
-    if (forced) forceLiveOnce = false;
 
-    // 放行原拦截器：不是伪造生成 / 功能被关掉 / 本次被要求强制真实检索
-    if (!isFakeTurn || !enabled || forced) {
-      if (forced) {
-        lastAction = '放行真实检索（手动强制）';
-        console.log(`${TAG} 按手动要求放行本次真实检索`);
-      } else if (isFakeTurn && !enabled) {
+    // 放行原拦截器：不是伪造生成 / 总开关被关掉
+    if (!isFakeTurn || !enabled) {
+      if (isFakeTurn && !enabled) {
         lastAction = '放行真实检索（功能已关闭）';
       }
       const result = await original.call(this, chat, contextSize, abort, type);
@@ -267,16 +260,10 @@ function panelHtml() {
     <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
   </div>
   <div class="inline-drawer-content">
-    <label class="checkbox_label" for="anima-pv-guard-enabled" title="关闭后完全放行：点开/刷新提示词查看器会像没装补丁一样真的检索一次（会调用向量模型）">
+    <label class="checkbox_label" for="anima-pv-guard-enabled" title="取消勾选即完全放行：点开/刷新提示词查看器会像没装补丁一样真的检索一次（会调用向量模型）">
       <input id="anima-pv-guard-enabled" type="checkbox" />
       <span>跳过提示词查看器的 RAG 检索（改完立刻生效，无需刷新）</span>
     </label>
-    <div style="margin-top:6px;">
-      <div id="anima-pv-guard-live" class="menu_button menu_button_icon" title="下次打开提示词查看器时放行一次真实检索，拿一份按当前聊天重算的记忆块（会调用一次向量模型）">
-        <i class="fa-solid fa-rotate"></i>
-        <span>本次强制真实检索</span>
-      </div>
-    </div>
     <small id="anima-pv-guard-status" class="anima-pv-guard-status" style="display:block;margin-top:6px;opacity:0.75;line-height:1.4;"></small>
   </div>
 </div>`;
@@ -294,7 +281,6 @@ function renderStatus() {
     .join(' / ');
   el.textContent =
     `${enabled ? '已启用（伪造生成跳过检索）' : '已关闭（放行检索）'}` +
-    `${forceLiveOnce ? '｜下次强制真实检索' : ''}` +
     `｜上次: ${lastAction}` +
     `｜快照: ${hasSnapshot ? snap : '无'}`;
 }
@@ -322,13 +308,6 @@ function setEnabled(value) {
   return enabled;
 }
 
-function forceLiveOnceNext() {
-  forceLiveOnce = true;
-  renderStatus();
-  toast('下次打开提示词查看器会真的检索一次（花一次向量调用）');
-  return forceLiveOnce;
-}
-
 function initUi(attempt = 0) {
   const $ = globalThis.jQuery;
   const container = globalThis.document?.getElementById('extensions_settings2');
@@ -345,7 +324,6 @@ function initUi(attempt = 0) {
   $('#anima-pv-guard-enabled').prop('checked', enabled).on('change', function () {
     setEnabled($(this).prop('checked'));
   });
-  $('#anima-pv-guard-live').on('click', () => forceLiveOnceNext());
   renderStatus();
 }
 
@@ -386,13 +364,12 @@ installGlobalTrap();
 installEventHooks();
 initUi();
 
-// 控制台 / 脚本接口：AnimaPVGuard.status() · setEnabled(false) · forceLive()
+// 控制台 / 脚本接口：AnimaPVGuard.status() · AnimaPVGuard.setEnabled(false)
 globalThis.AnimaPVGuard = {
   status: () => ({
     hasInterceptor: typeof globalThis[GLOBAL_KEY] === 'function',
     wrapped: !!globalThis[GLOBAL_KEY]?.__pvGuarded,
     enabled,
-    forceLiveOnce,
     lastAction,
     userTurnArmed,
     hasSnapshot,
@@ -405,5 +382,4 @@ globalThis.AnimaPVGuard = {
     suppressPostGen: SUPPRESS_ANIMA_POST_GEN,
   }),
   setEnabled,
-  forceLive: forceLiveOnceNext,
 };
